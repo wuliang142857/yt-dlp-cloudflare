@@ -1,10 +1,10 @@
-FROM python:3.11-slim-bookworm 
+FROM python:3.11-slim-bookworm
 
 # 设置工作目录
 WORKDIR /app
 
 # 安装系统依赖（ffmpeg 用于视频处理）
-RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \ 
+RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \
     apt update && apt-get install -y \
     ffmpeg && \
     apt clean && \
@@ -21,9 +21,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制应用代码
 COPY app.py .
 COPY entrypoint.sh .
-
-# 复制 cookies.txt（如果存在）
-COPY cookies.txt .
 
 # 赋予启动脚本执行权限
 RUN chmod +x entrypoint.sh
