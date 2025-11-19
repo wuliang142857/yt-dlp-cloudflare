@@ -21,8 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制应用代码
 COPY app.py .
 
-# 复制 cookies.txt（如果存在）
-COPY cookies.txt /app/cookies.txt 
+COPY cookies.txt . 
 
 # 暴露端口
 EXPOSE 8000
