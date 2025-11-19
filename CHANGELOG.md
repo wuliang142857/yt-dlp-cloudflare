@@ -1,34 +1,5 @@
 # 更新日志
 
-## 2024-11-20 v1.1.3 - Bot 检测优化 & 中文显示完善
-
-### 改进
-
-1. **YouTube Bot 检测优化**
-   - 添加 `user_agent` 选项，模拟真实浏览器
-   - 添加 `extractor_args` 配置，使用多个客户端（android、web）
-   - 优化参数以减少被 YouTube 识别为 bot 的概率
-
-2. **中文显示完全修复**
-   - 修复所有 JSON 响应（包括错误信息）的中文显示
-   - 所有 API 端点统一使用 `json.dumps(ensure_ascii=False)`
-   - 统一设置响应头 `Content-Type: application/json; charset=utf-8`
-   - 错误信息也能正确显示中文
-
-### 效果对比
-
-**修复前（错误信息）**：
-```json
-{"error": "\u83b7\u53d6\u4fe1\u606f\u5931\u8d25: ..."}
-```
-
-**修复后（错误信息）**：
-```json
-{"error": "获取信息失败: ..."}
-```
-
----
-
 ## 2024-11-20 v1.1.2 - 中文显示优化
 
 ### 改进

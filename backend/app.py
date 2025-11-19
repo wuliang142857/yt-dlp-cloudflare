@@ -78,11 +78,7 @@ def download_video():
         data = request.get_json()
 
         if not data or 'url' not in data:
-            return Response(
-                json.dumps({'error': '缺少 URL 参数'}, ensure_ascii=False),
-                status=400,
-                mimetype='application/json; charset=utf-8'
-            )
+            return jsonify({'error': '缺少 URL 参数'}), 400
 
         video_url = data['url']
         logger.info(f'开始下载视频: {video_url}')
@@ -100,14 +96,6 @@ def download_video():
             'extract_flat': False,
             'merge_output_format': 'mp4',  # 合并为 mp4 格式
             'nocheckcertificate': True,  # 禁用 SSL 证书验证（解决代理证书问题）
-            # 添加浏览器模拟选项以避免 bot 检测
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],  # 使用多个客户端尝试
-                    'skip': ['dash', 'hls'],  # 跳过某些格式以加快速度
-                }
-            },
         }
 
         # 如果有 cookies 文件，添加到配置
@@ -155,20 +143,10 @@ def download_video():
 
     except yt_dlp.utils.DownloadError as e:
         logger.error(f'下载错误: {str(e)}')
-        error_msg = f'下载失败: {str(e)}'
-        return Response(
-            json.dumps({'error': error_msg}, ensure_ascii=False),
-            status=400,
-            mimetype='application/json; charset=utf-8'
-        )
+        return jsonify({'error': f'下载失败: {str(e)}'}), 400
     except Exception as e:
         logger.error(f'服务器错误: {str(e)}')
-        error_msg = f'服务器错误: {str(e)}'
-        return Response(
-            json.dumps({'error': error_msg}, ensure_ascii=False),
-            status=500,
-            mimetype='application/json; charset=utf-8'
-        )
+        return jsonify({'error': f'服务器错误: {str(e)}'}), 500
 
 @app.route('/api/info', methods=['POST'])
 def get_video_info():
@@ -180,11 +158,7 @@ def get_video_info():
         data = request.get_json()
 
         if not data or 'url' not in data:
-            return Response(
-                json.dumps({'error': '缺少 URL 参数'}, ensure_ascii=False),
-                status=400,
-                mimetype='application/json; charset=utf-8'
-            )
+            return jsonify({'error': '缺少 URL 参数'}), 400
 
         video_url = data['url']
         logger.info(f'获取视频信息: {video_url}')
@@ -194,14 +168,6 @@ def get_video_info():
             'no_warnings': True,
             'extract_flat': False,
             'nocheckcertificate': True,  # 禁用 SSL 证书验证（解决代理证书问题）
-            # 添加浏览器模拟选项以避免 bot 检测
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],  # 使用多个客户端尝试
-                    'skip': ['dash', 'hls'],  # 跳过某些格式以加快速度
-                }
-            },
         }
 
         # 如果有 cookies 文件，添加到配置
@@ -232,12 +198,7 @@ def get_video_info():
 
     except Exception as e:
         logger.error(f'获取视频信息失败: {str(e)}')
-        error_msg = f'获取信息失败: {str(e)}'
-        return Response(
-            json.dumps({'error': error_msg}, ensure_ascii=False),
-            status=400,
-            mimetype='application/json; charset=utf-8'
-        )
+        return jsonify({'error': f'获取信息失败: {str(e)}'}), 400
 
 def parse_args():
     """解析命令行参数"""
