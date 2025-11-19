@@ -1,13 +1,19 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, Response
 from flask_cors import CORS
 import yt_dlp
 import os
 import tempfile
 import logging
+import argparse
+import json
 from pathlib import Path
 
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
+
+# 配置 Flask JSON 输出，禁用 ASCII 编码（支持中文等非 ASCII 字符）
+app.config['JSON_AS_ASCII'] = False
+app.config['JSON_SORT_KEYS'] = False  # 保持 JSON 键的原始顺序
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -15,6 +21,30 @@ logger = logging.getLogger(__name__)
 
 # 视频质量优先级：720p > 480p > 360p > 1080p > 4K
 QUALITY_PRIORITY = ['720', '480', '360', '1080', '2160']
+
+# 全局变量：cookies 文件路径
+# 优先从环境变量读取，用于 gunicorn 启动
+COOKIES_FILE = os.environ.get('COOKIES_FILE', '/app/cookies.txt')
+
+# 初始化时检查 cookies 文件
+if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+    logger.info(f'已配置 cookies 文件: {COOKIES_FILE}')
+elif COOKIES_FILE:
+    logger.warning(f'Cookies 文件不存在: {COOKIES_FILE}，将在没有 cookies 的情况下运行')
+    COOKIES_FILE = None
+else:
+    logger.warning('未配置 cookies 文件，将在没有 cookies 的情况下运行')
+    COOKIES_FILE = None
+
+# 全局变量：代理设置
+# 优先从环境变量读取，用于 gunicorn 启动
+PROXY_URL = os.environ.get('PROXY_URL', None)
+
+# 初始化时检查代理设置
+if PROXY_URL:
+    logger.info(f'已配置代理: {PROXY_URL}')
+else:
+    logger.info('未配置代理，将直接连接')
 
 def get_format_selector():
     """
@@ -57,15 +87,6 @@ def download_video():
         temp_dir = tempfile.mkdtemp()
         output_template = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
-        # 检查 cookies 文件
-        cookies_file = '/app/cookies.txt' if os.path.exists('/app/cookies.txt') else None
-        if not cookies_file:
-            # 本地开发环境
-            cookies_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
-            if not os.path.exists(cookies_file):
-                cookies_file = None
-                logger.warning('未找到 cookies.txt 文件')
-
         # 配置 yt-dlp 选项
         ydl_opts = {
             'format': get_format_selector(),
@@ -74,12 +95,20 @@ def download_video():
             'no_warnings': False,
             'extract_flat': False,
             'merge_output_format': 'mp4',  # 合并为 mp4 格式
+            'nocheckcertificate': True,  # 禁用 SSL 证书验证（解决代理证书问题）
         }
 
         # 如果有 cookies 文件，添加到配置
-        if cookies_file:
-            ydl_opts['cookiefile'] = cookies_file
-            logger.info(f'使用 cookies 文件: {cookies_file}')
+        if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+            ydl_opts['cookiefile'] = COOKIES_FILE
+            logger.info(f'使用 cookies 文件: {COOKIES_FILE}')
+        else:
+            logger.warning('未配置或未找到 cookies.txt 文件')
+
+        # 如果有代理配置，添加到选项
+        if PROXY_URL:
+            ydl_opts['proxy'] = PROXY_URL
+            logger.info(f'使用代理: {PROXY_URL}')
 
         # 下载视频
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -134,38 +163,85 @@ def get_video_info():
         video_url = data['url']
         logger.info(f'获取视频信息: {video_url}')
 
-        # 检查 cookies 文件
-        cookies_file = '/app/cookies.txt' if os.path.exists('/app/cookies.txt') else None
-        if not cookies_file:
-            cookies_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
-            if not os.path.exists(cookies_file):
-                cookies_file = None
-
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
+            'nocheckcertificate': True,  # 禁用 SSL 证书验证（解决代理证书问题）
         }
 
-        if cookies_file:
-            ydl_opts['cookiefile'] = cookies_file
+        # 如果有 cookies 文件，添加到配置
+        if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+            ydl_opts['cookiefile'] = COOKIES_FILE
+
+        # 如果有代理配置，添加到选项
+        if PROXY_URL:
+            ydl_opts['proxy'] = PROXY_URL
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
 
-            return jsonify({
+            result = {
                 'title': info.get('title'),
                 'duration': info.get('duration'),
                 'thumbnail': info.get('thumbnail'),
                 'uploader': info.get('uploader'),
                 'view_count': info.get('view_count'),
                 'description': info.get('description', '')[:200],  # 限制描述长度
-            })
+            }
+
+            # 使用 json.dumps 显式设置 ensure_ascii=False 以支持中文
+            return Response(
+                json.dumps(result, ensure_ascii=False),
+                mimetype='application/json; charset=utf-8'
+            )
 
     except Exception as e:
         logger.error(f'获取视频信息失败: {str(e)}')
         return jsonify({'error': f'获取信息失败: {str(e)}'}), 400
 
+def parse_args():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(description='YouTube Downloader API Server')
+    parser.add_argument(
+        '--cookies',
+        type=str,
+        default='/app/cookies.txt',
+        help='cookies.txt 文件路径 (默认: /app/cookies.txt)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=None,
+        help='服务器端口 (默认: 从环境变量 PORT 读取，或 8000)'
+    )
+    parser.add_argument(
+        '--proxy',
+        type=str,
+        default=None,
+        help='代理服务器地址 (例如: socks5://127.0.0.1:1080 或 http://proxy.example.com:8080)'
+    )
+    return parser.parse_args()
+
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8000))
+    args = parse_args()
+
+    # 设置全局 cookies 文件路径
+    COOKIES_FILE = args.cookies
+    if os.path.exists(COOKIES_FILE):
+        logger.info(f'已配置 cookies 文件: {COOKIES_FILE}')
+    else:
+        logger.warning(f'Cookies 文件不存在: {COOKIES_FILE}，将在没有 cookies 的情况下运行')
+
+    # 设置全局代理
+    if args.proxy:
+        PROXY_URL = args.proxy
+        logger.info(f'已配置代理: {PROXY_URL}')
+    else:
+        logger.info('未配置代理，将直接连接')
+
+    # 确定端口
+    port = args.port if args.port else int(os.environ.get('PORT', 8000))
+    logger.info(f'启动服务器，监听端口: {port}')
+
     app.run(host='0.0.0.0', port=port, debug=False)
