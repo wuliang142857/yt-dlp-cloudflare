@@ -1,12 +1,16 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm 
 
 # 设置工作目录
 WORKDIR /app
 
 # 安装系统依赖（ffmpeg 用于视频处理）
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \ 
+    apt update && apt-get install -y \
+    ffmpeg && \
+    apt clean && \
+	apt autoclean && \
+	apt autoremove --yes && \
+	rm -rf /var/lib/{apt,dpkg,cache,log}/
 
 # 复制 requirements.txt
 COPY requirements.txt .
@@ -18,7 +22,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 
 # 复制 cookies.txt（如果存在）
-COPY cookies.txt /app/cookies.txt 2>/dev/null || true
+COPY cookies.txt /app/cookies.txt 
 
 # 暴露端口
 EXPOSE 8000
