@@ -6,7 +6,7 @@
  */
 
 // 配置后端 API 地址（部署时需要替换为实际的 Koyeb URL）
-const BACKEND_URL = 'YOUR_KOYEB_APP_URL';  // 例如: https://your-app.koyeb.app
+const BACKEND_URL = 'https://grateful-meghan-heuristic-2525dfc9.koyeb.app/';  // 例如: https://your-app.koyeb.app
 
 // CORS 头配置
 const corsHeaders = {
