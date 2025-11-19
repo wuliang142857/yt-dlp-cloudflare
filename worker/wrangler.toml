@@ -1,0 +1,14 @@
+name = "youtube-downloader-proxy"
+main = "worker.js"
+compatibility_date = "2024-11-19"
+
+# Workers 路由配置
+# 部署后会得到一个 workers.dev 子域名
+
+# 可选：如果你有自己的域名，可以配置 routes
+# routes = [
+#   { pattern = "yourdomain.com/*", zone_name = "yourdomain.com" }
+# ]
+
+# 账户设置（运行 wrangler login 后会自动配置）
+# account_id = ""
