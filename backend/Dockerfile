@@ -20,11 +20,19 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
 COPY app.py .
+COPY entrypoint.sh .
 
-COPY cookies.txt . 
+# 复制 cookies.txt（如果存在）
+COPY cookies.txt .
+
+# 赋予启动脚本执行权限
+RUN chmod +x entrypoint.sh
+
+# 设置环境变量（可以在运行时覆盖）
+ENV COOKIES_PATH=/app/cookies.txt
 
 # 暴露端口
 EXPOSE 8000
 
-# 使用 gunicorn 运行应用
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+# 使用 entrypoint 脚本启动
+ENTRYPOINT ["./entrypoint.sh"]

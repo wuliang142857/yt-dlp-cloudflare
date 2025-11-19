@@ -62,17 +62,50 @@ yt-dlp-cloudflare/
 cp cookies.txt backend/
 ```
 
-#### 4. 修改 Dockerfile
+#### 4. 配置 Cookies 路径（可选）
 
-编辑 `backend/Dockerfile`，修改第 18 行：
+应用支持通过环境变量配置 cookies.txt 路径。默认路径为 `/app/cookies.txt`。
 
-```dockerfile
-# 修改前
-COPY ../cookies.txt /app/cookies.txt 2>/dev/null || true
+**方法 1：使用环境变量（推荐）**
 
-# 修改后
-COPY cookies.txt /app/cookies.txt
+在 Koyeb 部署时设置环境变量：
+- 变量名：`COOKIES_PATH`
+- 默认值：`/app/cookies.txt`
+
+**方法 2：本地开发时使用命令行参数**
+
+```bash
+python app.py --cookies /path/to/your/cookies.txt --port 8000
 ```
+
+#### 4. 配置代理（可选）
+
+如果需要通过代理访问 YouTube（例如本地测试或网络受限环境），可以配置代理服务器。
+
+**方法 1：使用环境变量**
+
+在 Koyeb 部署时设置环境变量：
+- 变量名：`PROXY_URL`
+- 示例值：`socks5://127.0.0.1:1080` 或 `http://proxy.example.com:8080`
+
+**方法 2：本地开发时使用命令行参数**
+
+```bash
+# 使用 SOCKS5 代理
+python app.py --proxy socks5://127.0.0.1:50170
+
+# 使用 HTTP 代理
+python app.py --proxy http://proxy.example.com:8080
+
+# 同时指定 cookies、代理和端口
+python app.py --cookies ./cookies.txt --proxy socks5://127.0.0.1:50170 --port 8000
+```
+
+**支持的代理协议**：
+- `http://` - HTTP 代理
+- `https://` - HTTPS 代理
+- `socks4://` - SOCKS4 代理
+- `socks5://` - SOCKS5 代理（推荐）
 
 #### 5. 部署到 Koyeb
 
@@ -89,6 +122,9 @@ COPY cookies.txt /app/cookies.txt
    - **Port**: 8000
    - **Region**: Tokyo（距离中国最近）或 Singapore
    - **Instance type**: Free（512MB RAM）
+   - **环境变量**（可选）：
+     - `COOKIES_PATH`: 自定义 cookies 文件路径（默认：/app/cookies.txt）
+     - `PROXY_URL`: 代理服务器地址（例如：socks5://127.0.0.1:1080）
 7. 点击 "Deploy"
 
 **方法 B：使用 Koyeb CLI**
@@ -307,11 +343,28 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 # 安装依赖
 pip install -r requirements.txt
 
-# 运行开发服务器
+# 运行开发服务器（默认配置）
 python app.py
+
+# 或者指定 cookies 路径和端口
+python app.py --cookies /path/to/cookies.txt --port 8000
+
+# 使用代理（本地测试推荐）
+python app.py --proxy socks5://127.0.0.1:50170
+
+# 完整配置示例
+python app.py --cookies ./cookies.txt --proxy socks5://127.0.0.1:50170 --port 8000
+
+# 查看所有参数
+python app.py --help
 ```
 
 访问 `http://localhost:8000`
+
+**命令行参数说明**：
+- `--cookies`: cookies.txt 文件路径（默认：/app/cookies.txt）
+- `--port`: 服务器端口（默认：从环境变量 PORT 读取，或 8000）
+- `--proxy`: 代理服务器地址（例如：socks5://127.0.0.1:50170）
 
 ### Worker 本地测试
 
@@ -321,6 +374,113 @@ wrangler dev
 ```
 
 访问 `http://localhost:8787`
+
+## 配置说明
+
+### Cookies 文件路径配置
+
+应用支持多种方式配置 cookies.txt 文件路径：
+
+#### 1. 环境变量（推荐用于生产环境）
+
+设置 `COOKIES_PATH` 环境变量：
+
+```bash
+# Docker 运行时
+docker run -e COOKIES_PATH=/app/my-cookies.txt your-image
+
+# Koyeb 部署
+# 在 Koyeb Dashboard 的环境变量中设置：
+# COOKIES_PATH = /app/cookies.txt
+```
+
+#### 2. 命令行参数（推荐用于本地开发）
+
+```bash
+# 指定 cookies 路径
+python app.py --cookies /path/to/cookies.txt
+
+# 同时指定端口
+python app.py --cookies /path/to/cookies.txt --port 8000
+```
+
+#### 3. 默认路径
+
+如果未配置，默认使用 `/app/cookies.txt`。
+
+### Docker 部署示例
+
+**使用默认路径**：
+```bash
+docker build -t youtube-downloader ./backend
+docker run -p 8000:8000 youtube-downloader
+```
+
+**使用自定义 cookies 路径**：
+```bash
+# 挂载外部 cookies 文件
+docker run -p 8000:8000 \
+  -v /path/to/your/cookies.txt:/app/my-cookies.txt \
+  -e COOKIES_PATH=/app/my-cookies.txt \
+  youtube-downloader
+```
+
+### 代理配置
+
+应用支持多种方式配置代理服务器：
+
+#### 1. 环境变量（推荐用于生产环境）
+
+设置 `PROXY_URL` 环境变量：
+
+```bash
+# Docker 运行时
+docker run -e PROXY_URL=socks5://127.0.0.1:1080 your-image
+
+# Koyeb 部署
+# 在 Koyeb Dashboard 的环境变量中设置：
+# PROXY_URL = socks5://proxy.example.com:1080
+```
+
+#### 2. 命令行参数（推荐用于本地开发）
+
+```bash
+# 指定代理
+python app.py --proxy socks5://127.0.0.1:50170
+
+# 同时指定 cookies 和代理
+python app.py --cookies ./cookies.txt --proxy socks5://127.0.0.1:50170
+```
+
+#### 3. 支持的代理协议
+
+- **HTTP**: `http://proxy.example.com:8080`
+- **HTTPS**: `https://proxy.example.com:8080`
+- **SOCKS4**: `socks4://127.0.0.1:1080`
+- **SOCKS5**: `socks5://127.0.0.1:1080`（推荐，支持 UDP 和认证）
+
+#### 4. 代理认证
+
+如果代理需要认证，可以在 URL 中包含用户名和密码：
+
+```bash
+# HTTP 代理认证
+python app.py --proxy http://username:password@proxy.example.com:8080
+
+# SOCKS5 代理认证
+python app.py --proxy socks5://username:password@127.0.0.1:1080
+```
+
+#### 5. Docker 部署示例（使用代理）
+
+```bash
+# 同时配置 cookies 和代理
+docker run -p 8000:8000 \
+  -v /path/to/cookies.txt:/app/cookies.txt \
+  -e COOKIES_PATH=/app/cookies.txt \
+  -e PROXY_URL=socks5://127.0.0.1:1080 \
+  youtube-downloader
+```
 
 ## 故障排查
 
@@ -346,7 +506,30 @@ wrangler dev
 - 如果视频需要登录，确保 cookies.txt 正确配置
 - 查看 Koyeb 应用日志
 
-### 问题 4：中国无法访问
+### 问题 4：SSL 证书验证失败（使用代理时）
+
+**错误信息**：
+```
+[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate
+```
+
+**原因**：
+某些代理服务器（特别是 SOCKS5 代理）会对 HTTPS 流量进行中间人检查，导致 SSL 证书验证失败。
+
+**解决方案**：
+✅ 已自动修复！应用已禁用 SSL 证书验证（`nocheckcertificate: True`），无需手动配置。
+
+**如果仍有问题**：
+1. 确认代理服务器正常运行
+2. 尝试更换代理协议（如从 SOCKS5 切换到 HTTP）
+3. 检查代理服务器的证书设置
+
+**安全说明**：
+禁用证书验证会降低安全性，但对于访问 YouTube 这样的公开网站是安全的。如果您对此有顾虑，可以：
+- 使用不进行 HTTPS 中间人检查的代理
+- 在不使用代理的环境中运行
+
+### 问题 5：中国无法访问
 
 **解决方案**：
 - 确保使用的是 Cloudflare Workers URL，不是直接访问 Koyeb
