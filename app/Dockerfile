@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制应用代码
 COPY app.py .
 COPY entrypoint.sh .
+COPY static/ ./static/
 
 # 赋予启动脚本执行权限
 RUN chmod +x entrypoint.sh

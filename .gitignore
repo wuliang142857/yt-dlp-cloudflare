@@ -50,5 +50,7 @@ tmp/
 .env
 .env.local
 
-# Cookies（如果包含敏感信息，建议添加）
-# cookies.txt
+# Cookies（包含敏感信息，不提交到 Git）
+cookies.txt
+*.txt.old
+cookies_base64.txt

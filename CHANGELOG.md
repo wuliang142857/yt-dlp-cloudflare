@@ -1,5 +1,86 @@
 # 更新日志
 
+## 2024-11-21 v1.2.0 - 前后端集成 & Cookies 环境变量支持
+
+### 新增功能
+
+1. **前后端集成**
+   - 前端页面集成到服务（app/static/index.html）
+   - 访问 Koyeb 根路径直接显示前端页面
+   - 无需单独部署 Cloudflare Pages
+   - 简化了部署流程，减少一个部署工程
+   - 重命名 backend → app（因为现在包含前后端）
+
+2. **Cookies 环境变量支持**
+   - 支持通过 `COOKIES_BASE64` 环境变量注入 cookies
+   - cookies.txt 不再需要提交到 Git 仓库
+   - 提升安全性，类似 Kubernetes ConfigMap
+   - 向后兼容文件方式配置
+
+3. **下载文件名优化**
+   - 使用视频标题作为下载文件名
+   - 自动清理非法字符（移除 `<>:"/\|?*` 等）
+   - 不再固定使用 video.mp4
+   - 限制文件名长度（最大 100 字符）
+
+4. **YouTube Bot 检测优化**
+   - 添加 User-Agent 模拟真实浏览器
+   - 配置多客户端策略 (android, web) 减少 bot 检测
+   - 修复所有 JSON 响应的中文显示 (ensure_ascii=False)
+   - 统一错误信息的 UTF-8 编码
+
+### 改进
+
+- 添加 `sanitize_filename()` 函数清理文件名
+- 优化 `entrypoint.sh`，支持从环境变量创建 cookies 文件
+- 更新 `.gitignore`，排除敏感的 cookies 文件
+- 改进根路由 `/`，返回 HTML 页面而非 JSON
+- Flask 配置静态文件服务：`static_folder='static', static_url_path=''`
+
+### 向后兼容性
+
+✅ 完全向后兼容。所有新功能可选，不影响现有配置。
+
+### 使用方法
+
+#### 1. Cookies 环境变量配置（推荐）
+
+```bash
+# 本地：将 cookies.txt 转换为 base64
+cat app/cookies.txt | base64 | tr -d '\n' > cookies_base64.txt
+
+# Koyeb：设置环境变量
+# 变量名: COOKIES_BASE64
+# 变量值: <复制 cookies_base64.txt 的内容>
+```
+
+#### 2. 访问前端页面
+
+```bash
+# 直接访问 Koyeb 根路径（不需要单独的 Cloudflare Pages）
+https://grateful-meghan-heuristic-2525dfc9.koyeb.app/
+```
+
+#### 3. 文件名示例
+
+**之前**：下载的文件都是 `video.mp4`
+
+**现在**：
+- `中国副总理刘鹤出访欧洲.mp4`
+- `Python Tutorial for Beginners.mp4`
+- `如何学习编程.mp4`
+
+### 文件变更
+
+- `backend/` → `app/` - 目录重命名
+- `app/app.py` - 添加静态文件服务、文件名清理、bot 检测优化
+- `app/static/index.html` - 新增前端页面（API_URL 使用相对路径）
+- `app/entrypoint.sh` - 支持 COOKIES_BASE64 环境变量
+- `app/Dockerfile` - 复制 static 目录
+- `.gitignore` - 排除 cookies.txt 和相关文件
+
+---
+
 ## 2024-11-20 v1.1.2 - 中文显示优化
 
 ### 改进

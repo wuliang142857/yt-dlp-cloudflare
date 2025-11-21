@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify, Response
+from flask import Flask, request, send_file, jsonify, Response, send_from_directory
 from flask_cors import CORS
 import yt_dlp
 import os
@@ -6,9 +6,10 @@ import tempfile
 import logging
 import argparse
 import json
+import re
 from pathlib import Path
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)  # 允许跨域请求
 
 # 配置 Flask JSON 输出，禁用 ASCII 编码（支持中文等非 ASCII 字符）
@@ -46,6 +47,24 @@ if PROXY_URL:
 else:
     logger.info('未配置代理，将直接连接')
 
+def sanitize_filename(filename, max_length=100):
+    """
+    清理文件名，移除非法字符
+    """
+    # 移除或替换非法字符
+    filename = re.sub(r'[<>:"/\\|?*]', '', filename)
+    # 移除控制字符
+    filename = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', filename)
+    # 去除首尾空格
+    filename = filename.strip()
+    # 限制长度（考虑到扩展名 .mp4 占 4 个字符）
+    if len(filename) > max_length - 4:
+        filename = filename[:max_length - 4]
+    # 如果清理后为空，使用默认名称
+    if not filename:
+        filename = 'video'
+    return filename
+
 def get_format_selector():
     """
     根据优先级返回格式选择器
@@ -56,12 +75,8 @@ def get_format_selector():
 
 @app.route('/')
 def index():
-    """健康检查端点"""
-    return jsonify({
-        'status': 'ok',
-        'message': 'YouTube Downloader API is running',
-        'version': '1.0.0'
-    })
+    """返回前端页面"""
+    return send_from_directory('static', 'index.html')
 
 @app.route('/health')
 def health():
@@ -131,13 +146,17 @@ def download_video():
             video_ext = info.get('ext', 'mp4')
             file_size = os.path.getsize(video_file)
 
+            # 清理文件名
+            clean_title = sanitize_filename(video_title)
+            final_filename = f'{clean_title}.{video_ext}'
+
             logger.info(f'视频下载成功: {video_title}, 大小: {file_size / 1024 / 1024:.2f} MB')
 
             # 发送文件
             return send_file(
                 video_file,
                 as_attachment=True,
-                download_name=f'{video_title}.{video_ext}',
+                download_name=final_filename,
                 mimetype='video/mp4'
             )
 
