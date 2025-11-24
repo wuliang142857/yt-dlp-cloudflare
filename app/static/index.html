@@ -297,6 +297,20 @@
             }
         }
 
+        function sanitizeFilename(filename) {
+            // 清理文件名，移除非法字符
+            filename = filename.replace(/[<>:"/\\|?*]/g, '');
+            // 移除控制字符
+            filename = filename.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+            // 去除首尾空格
+            filename = filename.trim();
+            // 如果清理后为空，使用默认名称
+            if (!filename) {
+                filename = 'video';
+            }
+            return filename;
+        }
+
         async function downloadVideo() {
             const url = document.getElementById('videoUrl').value.trim();
 
@@ -310,9 +324,33 @@
                 return;
             }
 
-            showStatus('正在下载视频，请稍候...', 'info');
+            showStatus('正在获取视频信息...', 'info');
 
             try {
+                // 先调用 /api/info 获取视频标题作为文件名
+                const infoResponse = await fetch(`${API_URL}/api/info`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url }),
+                });
+
+                if (!infoResponse.ok) {
+                    const data = await infoResponse.json();
+                    throw new Error(data.error || '获取视频信息失败');
+                }
+
+                const videoInfo = await infoResponse.json();
+                const videoTitle = videoInfo.title || 'video';
+
+                // 清理文件名
+                const cleanTitle = sanitizeFilename(videoTitle);
+                const filename = `${cleanTitle}.mp4`;
+
+                showStatus('正在下载视频，请稍候...', 'info');
+
+                // 然后下载视频
                 const response = await fetch(`${API_URL}/api/download`, {
                     method: 'POST',
                     headers: {
@@ -325,16 +363,6 @@
                 if (!response.ok) {
                     const data = await response.json();
                     throw new Error(data.error || '下载失败');
-                }
-
-                // 获取文件名
-                const contentDisposition = response.headers.get('Content-Disposition');
-                let filename = 'video.mp4';
-                if (contentDisposition) {
-                    const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(contentDisposition);
-                    if (matches && matches[1]) {
-                        filename = matches[1].replace(/['"]/g, '');
-                    }
                 }
 
                 // 下载文件

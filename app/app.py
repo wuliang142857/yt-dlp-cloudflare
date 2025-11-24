@@ -98,36 +98,11 @@ def download_video():
         video_url = data['url']
         logger.info(f'开始下载视频: {video_url}')
 
-        # 配置 yt-dlp 选项用于获取视频信息
-        info_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'nocheckcertificate': True,
-        }
-
-        # 如果有 cookies 文件，添加到配置
-        if COOKIES_FILE and os.path.exists(COOKIES_FILE):
-            info_opts['cookiefile'] = COOKIES_FILE
-            logger.info(f'使用 cookies 文件: {COOKIES_FILE}')
-
-        # 如果有代理配置，添加到选项
-        if PROXY_URL:
-            info_opts['proxy'] = PROXY_URL
-            logger.info(f'使用代理: {PROXY_URL}')
-
-        # 先获取视频信息以获取标题
-        video_title = 'video'
-        with yt_dlp.YoutubeDL(info_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            video_title = info.get('title', 'video')
-            logger.info(f'获取视频标题: {video_title}')
-
         # 创建临时目录
         temp_dir = tempfile.mkdtemp()
         output_template = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
-        # 配置 yt-dlp 选项用于下载
+        # 配置 yt-dlp 选项
         ydl_opts = {
             'format': get_format_selector(),
             'outtmpl': output_template,
@@ -141,14 +116,18 @@ def download_video():
         # 如果有 cookies 文件，添加到配置
         if COOKIES_FILE and os.path.exists(COOKIES_FILE):
             ydl_opts['cookiefile'] = COOKIES_FILE
+            logger.info(f'使用 cookies 文件: {COOKIES_FILE}')
+        else:
+            logger.warning('未配置或未找到 cookies.txt 文件')
 
         # 如果有代理配置，添加到选项
         if PROXY_URL:
             ydl_opts['proxy'] = PROXY_URL
+            logger.info(f'使用代理: {PROXY_URL}')
 
         # 下载视频
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # 获取视频信息并下载
+            # 获取视频信息
             info = ydl.extract_info(video_url, download=True)
 
             # 获取下载的文件路径
@@ -162,10 +141,12 @@ def download_video():
                 logger.error(f'视频文件不存在: {video_file}')
                 return jsonify({'error': '视频下载失败'}), 500
 
+            # 获取视频信息
+            video_title = info.get('title', 'video')
             video_ext = info.get('ext', 'mp4')
             file_size = os.path.getsize(video_file)
 
-            # 清理文件名（使用之前获取的标题）
+            # 清理文件名
             clean_title = sanitize_filename(video_title)
             final_filename = f'{clean_title}.{video_ext}'
 
