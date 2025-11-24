@@ -32,14 +32,6 @@ async function handleRequest(request) {
     return new Response(null, { headers: corsHeaders });
   }
 
-  // 健康检查
-  if (url.pathname === '/' || url.pathname === '/health') {
-    return Response.json(
-      { status: 'ok', message: 'Cloudflare Workers Proxy is running', backend: BACKEND_URL },
-      { headers: { 'Content-Type': 'application/json', ...corsHeaders } }
-    );
-  }
-
   // 代理 /api/*
   if (url.pathname.startsWith('/api/')) {
     try {
@@ -81,8 +73,34 @@ async function handleRequest(request) {
     }
   }
 
-  // 404
-  return Response.json({ error: 'Not Found' }, { status: 404, headers: corsHeaders });
+  // 代理所有其他请求到后端（包括页面、静态资源等）
+  try {
+    const backendUrl = new URL(url.pathname + url.search, BACKEND_URL);
+
+    const beReq = new Request(backendUrl.toString(), {
+      method: request.method,
+      headers: request.headers,
+      body: request.method !== 'GET' && request.method !== 'HEAD' ? await request.arrayBuffer() : undefined,
+    });
+
+    const beRes = await fetch(beReq);
+
+    // 清洗后端 CORS 头 + 合并 Worker CORS 头
+    const cleanedHeaders = sanitizeBackendHeaders(beRes.headers);
+    Object.entries(corsHeaders).forEach(([k, v]) => cleanedHeaders.set(k, v));
+
+    // 直接返回响应
+    return new Response(beRes.body, {
+      status: beRes.status,
+      statusText: beRes.statusText,
+      headers: cleanedHeaders,
+    });
+  } catch (err) {
+    return Response.json(
+      { error: '后端服务连接失败', message: err.message },
+      { status: 502, headers: corsHeaders }
+    );
+  }
 }
 
 export default { fetch: handleRequest };
