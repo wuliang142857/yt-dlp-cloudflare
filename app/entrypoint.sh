@@ -23,9 +23,10 @@ else
 fi
 
 # 启动 gunicorn
+# 超时设置为 600 秒（10 分钟），支持下载较长的视频
 exec gunicorn --bind 0.0.0.0:8000 \
     --workers 2 \
-    --timeout 300 \
+    --timeout 600 \
     --access-logfile - \
     --error-logfile - \
     app:app

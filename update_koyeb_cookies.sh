@@ -2,7 +2,7 @@
 set -e
 
 # 配置
-PROJECT_DIR="/Users/admin/zone/yt-dlp-cloudflare"
+PROJECT_DIR="$(dirname $(readlink -f $0))"
 KOYEB_APP_NAME="grateful-meghan"
 KOYEB_SERVICE_NAME="yt-dlp-cloudflare"
 
