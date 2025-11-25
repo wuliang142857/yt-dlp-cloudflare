@@ -124,3 +124,13 @@ GET /health
     ├── worker.js          # Worker 脚本
     └── wrangler.toml      # Wrangler 配置
 ```
+
+---
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Built%20with-AI-blueviolet?style=for-the-badge&logo=openai&logoColor=white" alt="Built with AI"/>
+</p>
+
+<p align="center">
+  <b>🤖 这个工程全部是由 AI 来实现。</b>
+</p>
