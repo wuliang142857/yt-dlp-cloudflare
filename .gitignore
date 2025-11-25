@@ -8,14 +8,26 @@ venv/
 env/
 ENV/
 .venv
+env.bak/
+venv.bak/
 pip-log.txt
 pip-delete-this-directory.txt
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 dist/
 build/
 *.egg-info/
+*.egg
+.eggs/
+*.manifest
+*.spec
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
 
 # IDE
 .vscode/
@@ -52,5 +64,10 @@ tmp/
 
 # Cookies（包含敏感信息，不提交到 Git）
 cookies.txt
+app/cookies.txt
+*.cookies
 *.txt.old
 cookies_base64.txt
+
+# Temporary notes
+p

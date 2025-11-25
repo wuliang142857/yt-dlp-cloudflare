@@ -49,7 +49,39 @@ yt-dlp-cloudflare/
 
 #### 2. 准备 cookies.txt（可选但推荐）
 
-如果需要下载需要登录的视频，请准备 cookies.txt 文件：
+如果需要下载需要登录的视频，请准备 cookies.txt 文件。
+
+**推荐方法：使用 Firefox 导出（最简单）**
+
+1. 安装 Firefox 浏览器：
+   ```bash
+   # Debian/Ubuntu
+   sudo apt-get install firefox
+   ```
+
+2. 使用 Firefox 登录 YouTube 并访问需要的视频
+
+3. 关闭 Firefox 并导出 cookies：
+   ```bash
+   # 关闭 Firefox
+   pkill firefox
+
+   # 导出 cookies
+   python3 export_cookies_firefox.py > cookies.txt
+   ```
+
+4. 验证导出结果：
+   ```bash
+   # 查看导出的 cookies 数量
+   grep -v '^#' cookies.txt | wc -l
+   ```
+
+**为什么推荐 Firefox？**
+- Firefox 的 cookies 不加密，导出成功率 100%
+- 无需安装额外依赖
+- 简单快速
+
+**备选方法：使用浏览器扩展**
 
 1. 安装浏览器扩展 [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
 2. 登录 YouTube
@@ -377,6 +409,34 @@ wrangler dev
 
 ## 配置说明
 
+### Koyeb Cookies 自动更新
+
+如果你已经部署到 Koyeb，可以使用自动更新脚本来更新 cookies：
+
+```bash
+# 编辑脚本配置
+vim update_koyeb_cookies.sh
+
+# 修改以下配置：
+# PROJECT_DIR：项目路径
+# KOYEB_APP_NAME：你的 Koyeb 应用名称
+# KOYEB_SERVICE_NAME：你的 Koyeb 服务名称
+
+# 运行更新脚本
+bash update_koyeb_cookies.sh
+```
+
+脚本会自动：
+1. 从 Firefox 导出最新的 cookies
+2. 编码为 base64
+3. 更新到 Koyeb 环境变量
+4. 触发 Koyeb 自动重启服务
+
+**前提条件**：
+- 已安装 [Koyeb CLI](https://www.koyeb.com/docs/cli/installation)
+- 已登录 Koyeb：`koyeb login`
+- 已使用 Firefox 登录 YouTube
+
 ### Cookies 文件路径配置
 
 应用支持多种方式配置 cookies.txt 文件路径：
@@ -545,7 +605,9 @@ docker run -p 8000:8000 \
 
 ## 许可证
 
-MIT License
+Apache License 2.0
+
+详见 [LICENSE](LICENSE) 文件。
 
 ## 免责声明
 

@@ -35,21 +35,22 @@ if ! koyeb service list --app "$KOYEB_APP_NAME" &> /dev/null; then
     exit 1
 fi
 
-echo "🍪 导出本地 Chrome cookies..."
+echo "🍪 导出本地 Firefox cookies..."
 cd "$PROJECT_DIR"
 
-if [ ! -f "export_cookies_pycookiecheat.py" ]; then
-    echo "❌ 找不到 export_cookies_pycookiecheat.py"
+if [ ! -f "export_cookies_firefox.py" ]; then
+    echo "❌ 找不到 export_cookies_firefox.py"
     exit 1
 fi
 
 # 导出 cookies
-if ! python3 export_cookies_pycookiecheat.py > /tmp/cookies_new.txt 2>/dev/null; then
+if ! python3 export_cookies_firefox.py > /tmp/cookies_new.txt 2>/dev/null; then
     echo "❌ Cookies 导出失败"
     echo ""
     echo "请确保:"
-    echo "  1. 已安装 pycookiecheat: pip3 install pycookiecheat"
-    echo "  2. Chrome 浏览器已安装并且已登录 YouTube"
+    echo "  1. Firefox 浏览器已安装"
+    echo "  2. 已使用 Firefox 访问并登录需要的网站（如 YouTube）"
+    echo "  3. Firefox 已关闭（建议先运行: pkill firefox）"
     echo ""
     exit 1
 fi
