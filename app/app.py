@@ -115,7 +115,7 @@ TASKS_DIR = os.path.join(CACHE_DIR, 'tasks')
 os.makedirs(TASKS_DIR, exist_ok=True)
 
 # 文件过期时间（秒）
-FILE_EXPIRE_TIME = 5 * 60  # 5分钟
+FILE_EXPIRE_TIME = 10 * 60  # 10分钟
 
 # 文件锁目录
 LOCKS_DIR = os.path.join(CACHE_DIR, 'locks')
