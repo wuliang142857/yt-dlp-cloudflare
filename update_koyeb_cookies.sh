@@ -86,7 +86,7 @@ echo ""
 # 更新服务
 if koyeb services update "$KOYEB_SERVICE_NAME" \
     --app "$KOYEB_APP_NAME" \
-    --override-env COOKIES_BASE64="$COOKIES_BASE64"; then
+    --env COOKIES_BASE64="$COOKIES_BASE64"; then
 
     echo ""
     echo "✅ Cookies 已成功更新到 Koyeb！"

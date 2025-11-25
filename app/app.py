@@ -35,7 +35,7 @@ def ensure_cookies():
     返回 cookies 文件路径（如果成功）或 None
     """
     # 默认 cookies 文件路径
-    default_cookies_path = os.environ.get('COOKIES_FILE', '/app/cookies.txt')
+    default_cookies_path = os.environ.get('COOKIES_FILE') or '/app/cookies.txt'
 
     # 检查是否有环境变量中的 base64 编码 cookies
     cookies_base64 = os.environ.get('COOKIES_BASE64')
