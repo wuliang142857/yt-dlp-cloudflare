@@ -2,11 +2,13 @@ from flask import Flask, request, send_file, jsonify, Response, send_from_direct
 from flask_cors import CORS
 import yt_dlp
 import os
+import sys
 import tempfile
 import logging
 import argparse
 import json
 import re
+import base64
 from pathlib import Path
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -23,19 +25,64 @@ logger = logging.getLogger(__name__)
 # 视频质量优先级：720p > 480p > 360p > 1080p > 4K
 QUALITY_PRIORITY = ['720', '480', '360', '1080', '2160']
 
+def ensure_cookies():
+    """
+    从环境变量恢复 cookies（如果存在）
+
+    检查 COOKIES_BASE64 环境变量，如果存在则解码并写入 cookies.txt
+    这允许通过环境变量更新 cookies，而不需要重新构建镜像
+
+    返回 cookies 文件路径（如果成功）或 None
+    """
+    # 默认 cookies 文件路径
+    default_cookies_path = os.environ.get('COOKIES_FILE', '/app/cookies.txt')
+
+    # 检查是否有环境变量中的 base64 编码 cookies
+    cookies_base64 = os.environ.get('COOKIES_BASE64')
+
+    if cookies_base64:
+        try:
+            logger.info('🍪 从环境变量 COOKIES_BASE64 恢复 cookies...')
+
+            # 解码 base64
+            cookies_content = base64.b64decode(cookies_base64).decode('utf-8')
+
+            # 统计 cookies 数量（非空行且非注释行）
+            cookie_lines = [line for line in cookies_content.split('\n')
+                          if line.strip() and not line.strip().startswith('#')]
+            cookie_count = len(cookie_lines)
+
+            # 确保目录存在
+            cookies_dir = os.path.dirname(default_cookies_path)
+            if cookies_dir and not os.path.exists(cookies_dir):
+                os.makedirs(cookies_dir, exist_ok=True)
+
+            # 写入文件
+            with open(default_cookies_path, 'w', encoding='utf-8') as f:
+                f.write(cookies_content)
+
+            logger.info(f'✅ Cookies 已从环境变量恢复到 {default_cookies_path}')
+            logger.info(f'📊 共 {cookie_count} 个 cookies')
+
+            return default_cookies_path
+
+        except Exception as e:
+            logger.error(f'⚠️ 从环境变量恢复 cookies 失败: {e}')
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+
+    # 检查是否存在挂载的 cookies 文件
+    if os.path.exists(default_cookies_path):
+        logger.info(f'✅ 使用现有 cookies: {default_cookies_path}')
+        return default_cookies_path
+
+    logger.warning('⚠️ 未找到 cookies 文件，也没有 COOKIES_BASE64 环境变量')
+    return None
+
 # 全局变量：cookies 文件路径
 # 优先从环境变量读取，用于 gunicorn 启动
-COOKIES_FILE = os.environ.get('COOKIES_FILE', '/app/cookies.txt')
-
-# 初始化时检查 cookies 文件
-if COOKIES_FILE and os.path.exists(COOKIES_FILE):
-    logger.info(f'已配置 cookies 文件: {COOKIES_FILE}')
-elif COOKIES_FILE:
-    logger.warning(f'Cookies 文件不存在: {COOKIES_FILE}，将在没有 cookies 的情况下运行')
-    COOKIES_FILE = None
-else:
-    logger.warning('未配置 cookies 文件，将在没有 cookies 的情况下运行')
-    COOKIES_FILE = None
+# 启动时尝试从环境变量恢复 cookies
+COOKIES_FILE = ensure_cookies()
 
 # 全局变量：代理设置
 # 优先从环境变量读取，用于 gunicorn 启动

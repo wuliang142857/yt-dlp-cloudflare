@@ -1,0 +1,11 @@
+# Chrome Cookie 导出工具依赖
+
+# 主要依赖（推荐）
+pycookiecheat>=0.7.0
+
+# 备选方案依赖（如果需要手动实现）
+# pycryptodome>=3.18.0
+# keyring>=24.0.0
+
+# Windows 需要的依赖（如果在 Windows 上运行）
+# pywin32>=305
