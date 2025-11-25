@@ -50,8 +50,11 @@ async function handleRequest(request) {
       const cleanedHeaders = sanitizeBackendHeaders(beRes.headers);
       Object.entries(corsHeaders).forEach(([k, v]) => cleanedHeaders.set(k, v));
 
-      // 视频流直传
-      if (beRes.headers.get('Content-Type')?.startsWith('video/')) {
+      // 文件流直传（视频、zip等）
+      const contentType = beRes.headers.get('Content-Type') || '';
+      if (contentType.startsWith('video/') ||
+          contentType.startsWith('application/zip') ||
+          contentType.startsWith('application/octet-stream')) {
         return new Response(beRes.body, {
           status: beRes.status,
           statusText: beRes.statusText,

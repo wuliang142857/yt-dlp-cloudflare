@@ -295,6 +295,92 @@
             100% { transform: rotate(360deg); }
         }
 
+        /* 进度条样式 */
+        .progress-section {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .progress-section h4 {
+            margin-bottom: 12px;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .progress-bar-container {
+            background: #e0e0e0;
+            border-radius: 10px;
+            height: 20px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-bar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+            min-width: 40px;
+        }
+
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .download-link-section {
+            background: #e8f5e9;
+            padding: 16px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+            text-align: center;
+        }
+
+        .download-link-section p {
+            margin-bottom: 12px;
+            color: #388e3c;
+        }
+
+        .download-link-section .warning {
+            font-size: 12px;
+            color: #f57c00;
+            margin-top: 10px;
+        }
+
+        .btn-download-link {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-download-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn-download-link.disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
         .footer {
             text-align: center;
             margin-top: 30px;
@@ -334,6 +420,25 @@
         </div>
 
         <div id="status" class="status"></div>
+
+        <div id="progressSection" class="progress-section">
+            <h4>服务器正在下载视频...</h4>
+            <div class="progress-bar-container">
+                <div id="progressBar" class="progress-bar" style="width: 0%">0%</div>
+            </div>
+            <div class="progress-info">
+                <span id="progressSpeed">速度: --</span>
+                <span id="progressEta">剩余时间: --</span>
+            </div>
+        </div>
+
+        <div id="downloadLinkSection" class="download-link-section">
+            <p>视频已准备好！点击下方按钮下载：</p>
+            <a id="downloadLink" href="#" class="btn-download-link" onclick="handleDownloadClick(event)">
+                下载文件
+            </a>
+            <p class="warning">注意：文件只能下载一次，5分钟内未下载将自动删除</p>
+        </div>
         <div id="videoInfo" class="video-info"></div>
 
         <div id="optionsSection" class="options-section">
@@ -357,6 +462,9 @@
         let currentVideoInfo = null;
         let selectedFormatId = null;
         let selectedSubtitle = null;
+        let currentTaskId = null;
+        let progressPollInterval = null;
+        let fileDownloaded = false;
 
         function showStatus(message, type = 'info') {
             const statusEl = document.getElementById('status');
@@ -390,6 +498,119 @@
                 return `${(mb / 1024).toFixed(1)} GB`;
             }
             return `${mb.toFixed(1)} MB`;
+        }
+
+        function formatSpeed(bytesPerSecond) {
+            if (!bytesPerSecond) return '--';
+            const mbps = bytesPerSecond / (1024 * 1024);
+            if (mbps >= 1) {
+                return `${mbps.toFixed(1)} MB/s`;
+            }
+            const kbps = bytesPerSecond / 1024;
+            return `${kbps.toFixed(0)} KB/s`;
+        }
+
+        function formatEta(seconds) {
+            if (!seconds || seconds <= 0) return '--';
+            if (seconds < 60) return `${Math.round(seconds)}秒`;
+            if (seconds < 3600) return `${Math.round(seconds / 60)}分钟`;
+            return `${Math.round(seconds / 3600)}小时`;
+        }
+
+        function showProgress() {
+            document.getElementById('progressSection').style.display = 'block';
+            document.getElementById('downloadLinkSection').style.display = 'none';
+        }
+
+        function hideProgress() {
+            document.getElementById('progressSection').style.display = 'none';
+        }
+
+        function updateProgress(progress, speed, eta) {
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = `${progress}%`;
+            progressBar.textContent = `${progress}%`;
+
+            document.getElementById('progressSpeed').textContent = `速度: ${formatSpeed(speed)}`;
+            document.getElementById('progressEta').textContent = `剩余时间: ${formatEta(eta)}`;
+        }
+
+        function showDownloadLink(taskId, filename, filesize) {
+            hideProgress();
+            const section = document.getElementById('downloadLinkSection');
+            const link = document.getElementById('downloadLink');
+
+            link.href = `${API_URL}/api/file/${taskId}`;
+            link.textContent = `下载 ${filename} (${formatFileSize(filesize)})`;
+            link.classList.remove('disabled');
+
+            section.style.display = 'block';
+            fileDownloaded = false;
+        }
+
+        function hideDownloadLink() {
+            document.getElementById('downloadLinkSection').style.display = 'none';
+        }
+
+        function handleDownloadClick(event) {
+            if (fileDownloaded) {
+                event.preventDefault();
+                showStatus('文件已下载，不可重复下载', 'error');
+                return;
+            }
+
+            // 标记为已下载
+            fileDownloaded = true;
+            const link = document.getElementById('downloadLink');
+            link.classList.add('disabled');
+            link.textContent = '已下载（不可重复下载）';
+
+            showStatus('正在下载文件...', 'info');
+
+            // 延迟隐藏下载区域
+            setTimeout(() => {
+                hideDownloadLink();
+                showStatus('下载完成！', 'success');
+            }, 2000);
+        }
+
+        function stopProgressPolling() {
+            if (progressPollInterval) {
+                clearInterval(progressPollInterval);
+                progressPollInterval = null;
+            }
+        }
+
+        async function pollProgress(taskId) {
+            try {
+                const response = await fetch(`${API_URL}/api/progress/${taskId}`);
+                const data = await response.json();
+
+                if (data.status === 'downloading') {
+                    updateProgress(data.progress, data.speed, data.eta);
+                } else if (data.status === 'processing') {
+                    updateProgress(100, 0, 0);
+                    document.getElementById('progressSection').querySelector('h4').textContent = '正在处理视频...';
+                } else if (data.status === 'completed') {
+                    stopProgressPolling();
+                    hideProgress();
+                    showDownloadLink(taskId, data.filename, data.filesize);
+                    showStatus('视频已准备好，请点击下载', 'success');
+                    document.getElementById('btnDownload').disabled = false;
+                } else if (data.status === 'failed') {
+                    stopProgressPolling();
+                    hideProgress();
+                    showStatus(`下载失败: ${data.error}`, 'error');
+                    document.getElementById('btnDownload').disabled = !selectedFormatId;
+                } else if (data.status === 'expired') {
+                    stopProgressPolling();
+                    hideProgress();
+                    showStatus('文件已过期或已被下载', 'error');
+                    document.getElementById('btnDownload').disabled = !selectedFormatId;
+                }
+            } catch (error) {
+                console.error('轮询进度失败:', error);
+            }
         }
 
         function showVideoInfo(info) {
@@ -455,6 +676,10 @@
             selectedFormatId = null;
             selectedSubtitle = null;
             updateDownloadButton();
+            // 隐藏进度和下载链接
+            stopProgressPolling();
+            hideProgress();
+            hideDownloadLink();
         }
 
         function selectFormat(formatId, element) {
@@ -578,11 +803,15 @@
                 return;
             }
 
-            showStatus('正在下载视频，请稍候（可能需要几分钟）...', 'info');
-            document.getElementById('btnDownload').disabled = true;
+            // 停止之前的轮询
+            stopProgressPolling();
+            hideDownloadLink();
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 600000);
+            // 隐藏分辨率和字幕选择区域
+            document.getElementById('optionsSection').style.display = 'none';
+
+            showStatus('正在启动下载任务...', 'info');
+            document.getElementById('btnDownload').disabled = true;
 
             try {
                 const requestBody = {
@@ -593,47 +822,34 @@
                     requestBody.subtitle = selectedSubtitle;
                 }
 
-                const response = await fetch(`${API_URL}/api/download`, {
+                // 启动下载任务
+                const response = await fetch(`${API_URL}/api/start-download`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody),
-                    signal: controller.signal,
                 });
-                clearTimeout(timeoutId);
+
+                const data = await response.json();
 
                 if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.error || '下载失败');
+                    throw new Error(data.error || '启动下载失败');
                 }
 
-                // 获取文件名
-                let filename = 'video.mp4';
-                if (currentVideoInfo && currentVideoInfo.title) {
-                    const cleanTitle = sanitizeFilename(currentVideoInfo.title);
-                    filename = selectedSubtitle ? `${cleanTitle}.zip` : `${cleanTitle}.mp4`;
-                }
+                currentTaskId = data.task_id;
 
-                // 下载文件
-                const blob = await response.blob();
-                const downloadUrl = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = downloadUrl;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(downloadUrl);
-                document.body.removeChild(a);
+                // 显示进度条
+                showProgress();
+                updateProgress(0, 0, 0);
+                document.getElementById('progressSection').querySelector('h4').textContent = '服务器正在下载视频...';
 
-                showStatus('视频下载成功！', 'success');
+                showStatus('服务器正在下载视频，请稍候...', 'info');
+
+                // 开始轮询进度
+                progressPollInterval = setInterval(() => pollProgress(currentTaskId), 1000);
 
             } catch (error) {
-                clearTimeout(timeoutId);
-                if (error.name === 'AbortError') {
-                    showStatus('错误: 下载超时，请稍后重试或选择较低分辨率', 'error');
-                } else {
-                    showStatus(`错误: ${error.message}`, 'error');
-                }
-            } finally {
+                hideProgress();
+                showStatus(`错误: ${error.message}`, 'error');
                 document.getElementById('btnDownload').disabled = !selectedFormatId;
             }
         }

@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify, Response, send_from_directory
+from flask import Flask, request, send_file, jsonify, Response, send_from_directory, after_this_request
 from flask_cors import CORS
 import yt_dlp
 import os
@@ -9,6 +9,10 @@ import argparse
 import json
 import re
 import base64
+import uuid
+import threading
+import time
+import shutil
 from pathlib import Path
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -93,6 +97,85 @@ if PROXY_URL:
     logger.info(f'已配置代理: {PROXY_URL}')
 else:
     logger.info('未配置代理，将直接连接')
+
+# ================ 下载任务管理 ================
+# 存储所有下载任务的状态
+# 结构: {task_id: {status, progress, speed, eta, filename, filepath, error, created_at, downloaded_at, download_count}}
+download_tasks = {}
+download_tasks_lock = threading.Lock()
+
+# 缓存目录
+CACHE_DIR = os.environ.get('CACHE_DIR', '/tmp/yt-dlp-cache')
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+# 文件过期时间（秒）
+FILE_EXPIRE_TIME = 5 * 60  # 5分钟
+
+def cleanup_expired_files():
+    """清理过期的下载文件"""
+    while True:
+        try:
+            time.sleep(30)  # 每30秒检查一次
+            current_time = time.time()
+            tasks_to_remove = []
+
+            with download_tasks_lock:
+                for task_id, task in list(download_tasks.items()):
+                    # 跳过正在下载的任务
+                    if task['status'] == 'downloading':
+                        continue
+
+                    # 检查是否过期（下载完成后5分钟未被下载，或已被下载过）
+                    if task['status'] == 'completed':
+                        # 已被下载过，删除文件和任务
+                        if task.get('download_count', 0) > 0:
+                            tasks_to_remove.append(task_id)
+                            logger.info(f'任务 {task_id} 已被下载，准备清理')
+                        # 超过5分钟未下载
+                        elif task.get('downloaded_at') and (current_time - task['downloaded_at'] > FILE_EXPIRE_TIME):
+                            tasks_to_remove.append(task_id)
+                            logger.info(f'任务 {task_id} 已过期（5分钟未下载），准备清理')
+
+                    # 失败的任务也清理
+                    elif task['status'] == 'failed':
+                        if current_time - task.get('created_at', 0) > FILE_EXPIRE_TIME:
+                            tasks_to_remove.append(task_id)
+
+            # 清理任务和文件
+            for task_id in tasks_to_remove:
+                with download_tasks_lock:
+                    task = download_tasks.get(task_id)
+                    if task:
+                        filepath = task.get('filepath')
+                        temp_dir = task.get('temp_dir')
+
+                        # 删除文件
+                        if filepath and os.path.exists(filepath):
+                            try:
+                                os.remove(filepath)
+                                logger.info(f'已删除文件: {filepath}')
+                            except Exception as e:
+                                logger.error(f'删除文件失败: {e}')
+
+                        # 删除临时目录
+                        if temp_dir and os.path.exists(temp_dir):
+                            try:
+                                shutil.rmtree(temp_dir)
+                                logger.info(f'已删除临时目录: {temp_dir}')
+                            except Exception as e:
+                                logger.error(f'删除临时目录失败: {e}')
+
+                        # 从任务列表中移除
+                        del download_tasks[task_id]
+                        logger.info(f'已清理任务: {task_id}')
+
+        except Exception as e:
+            logger.error(f'清理线程错误: {e}')
+
+# 启动清理线程
+cleanup_thread = threading.Thread(target=cleanup_expired_files, daemon=True)
+cleanup_thread.start()
+logger.info('已启动文件清理线程')
 
 def sanitize_filename(filename, max_length=100):
     """
@@ -265,6 +348,302 @@ def download_video():
     except Exception as e:
         logger.error(f'服务器错误: {str(e)}')
         return jsonify({'error': f'服务器错误: {str(e)}'}), 500
+
+
+# ================ 异步下载相关接口 ================
+
+def download_video_task(task_id, video_url, format_id, subtitle_lang):
+    """后台下载视频的任务函数"""
+    temp_dir = None
+    try:
+        # 创建临时目录
+        temp_dir = tempfile.mkdtemp(dir=CACHE_DIR)
+        output_template = os.path.join(temp_dir, '%(title)s.%(ext)s')
+
+        # 更新任务状态
+        with download_tasks_lock:
+            download_tasks[task_id]['temp_dir'] = temp_dir
+            download_tasks[task_id]['status'] = 'downloading'
+
+        # 进度回调函数
+        def progress_hook(d):
+            with download_tasks_lock:
+                if task_id not in download_tasks:
+                    return
+
+                if d['status'] == 'downloading':
+                    total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                    downloaded = d.get('downloaded_bytes', 0)
+
+                    if total > 0:
+                        progress = (downloaded / total) * 100
+                    else:
+                        progress = 0
+
+                    download_tasks[task_id].update({
+                        'progress': round(progress, 1),
+                        'downloaded_bytes': downloaded,
+                        'total_bytes': total,
+                        'speed': d.get('speed', 0),
+                        'eta': d.get('eta', 0),
+                    })
+                elif d['status'] == 'finished':
+                    download_tasks[task_id]['progress'] = 100
+                    download_tasks[task_id]['status'] = 'processing'
+
+        # 配置 yt-dlp 选项
+        ydl_opts = {
+            'outtmpl': output_template,
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'nocheckcertificate': True,
+            'progress_hooks': [progress_hook],
+        }
+
+        # 设置格式
+        if format_id:
+            ydl_opts['format'] = f'{format_id}+bestaudio/best/{format_id}'
+            ydl_opts['merge_output_format'] = 'mp4'
+        else:
+            ydl_opts['format'] = get_format_selector()
+
+        # 配置字幕下载
+        if subtitle_lang:
+            ydl_opts['writesubtitles'] = True
+            ydl_opts['subtitleslangs'] = [subtitle_lang]
+            ydl_opts['writeautomaticsub'] = True
+
+        if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+            ydl_opts['cookiefile'] = COOKIES_FILE
+
+        if PROXY_URL:
+            ydl_opts['proxy'] = PROXY_URL
+
+        # 下载视频
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+
+            # 获取下载的文件路径
+            if 'requested_downloads' in info:
+                video_file = info['requested_downloads'][0]['filepath']
+            else:
+                video_file = ydl.prepare_filename(info)
+
+            if not os.path.exists(video_file):
+                raise Exception('视频文件不存在')
+
+            video_title = info.get('title', 'video')
+            video_ext = info.get('ext', 'mp4')
+            file_size = os.path.getsize(video_file)
+
+            clean_title = sanitize_filename(video_title)
+            final_filename = f'{clean_title}.{video_ext}'
+            final_filepath = video_file
+            final_mimetype = 'video/mp4'
+
+            # 检查是否有字幕文件需要打包
+            subtitle_file = None
+            if subtitle_lang:
+                for ext in ['vtt', 'srt', 'ass']:
+                    sub_path = os.path.join(temp_dir, f'{os.path.splitext(os.path.basename(video_file))[0]}.{subtitle_lang}.{ext}')
+                    if os.path.exists(sub_path):
+                        subtitle_file = sub_path
+                        break
+
+            # 如果有字幕，打包成 zip
+            if subtitle_file:
+                import zipfile
+                zip_filename = f'{clean_title}.zip'
+                zip_path = os.path.join(temp_dir, zip_filename)
+
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    zf.write(video_file, final_filename)
+                    sub_ext = os.path.splitext(subtitle_file)[1]
+                    zf.write(subtitle_file, f'{clean_title}.{subtitle_lang}{sub_ext}')
+
+                final_filename = zip_filename
+                final_filepath = zip_path
+                final_mimetype = 'application/zip'
+                file_size = os.path.getsize(zip_path)
+
+            # 更新任务状态为完成
+            with download_tasks_lock:
+                download_tasks[task_id].update({
+                    'status': 'completed',
+                    'progress': 100,
+                    'filename': final_filename,
+                    'filepath': final_filepath,
+                    'filesize': file_size,
+                    'mimetype': final_mimetype,
+                    'downloaded_at': time.time(),
+                    'download_count': 0,
+                })
+
+            logger.info(f'任务 {task_id} 下载完成: {final_filename}, 大小: {file_size / 1024 / 1024:.2f} MB')
+
+    except Exception as e:
+        logger.error(f'任务 {task_id} 下载失败: {str(e)}')
+        with download_tasks_lock:
+            download_tasks[task_id].update({
+                'status': 'failed',
+                'error': str(e),
+            })
+        # 清理临时目录
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
+
+
+@app.route('/api/start-download', methods=['POST'])
+def start_download():
+    """
+    启动后台下载任务
+    请求体: {
+        "url": "YouTube视频URL",
+        "format_id": "格式ID（可选）",
+        "subtitle": "字幕语言代码（可选）"
+    }
+    返回: { "task_id": "任务ID" }
+    """
+    try:
+        data = request.get_json()
+
+        if not data or 'url' not in data:
+            return jsonify({'error': '缺少 URL 参数'}), 400
+
+        video_url = data['url']
+        format_id = data.get('format_id')
+        subtitle_lang = data.get('subtitle')
+
+        # 生成任务ID
+        task_id = str(uuid.uuid4())
+
+        # 初始化任务状态
+        with download_tasks_lock:
+            download_tasks[task_id] = {
+                'status': 'pending',
+                'progress': 0,
+                'downloaded_bytes': 0,
+                'total_bytes': 0,
+                'speed': 0,
+                'eta': 0,
+                'filename': None,
+                'filepath': None,
+                'error': None,
+                'created_at': time.time(),
+                'downloaded_at': None,
+                'download_count': 0,
+                'temp_dir': None,
+            }
+
+        # 启动下载线程
+        thread = threading.Thread(
+            target=download_video_task,
+            args=(task_id, video_url, format_id, subtitle_lang),
+            daemon=True
+        )
+        thread.start()
+
+        logger.info(f'启动下载任务: {task_id}, URL: {video_url}')
+
+        return jsonify({'task_id': task_id})
+
+    except Exception as e:
+        logger.error(f'启动下载任务失败: {str(e)}')
+        return jsonify({'error': f'启动下载失败: {str(e)}'}), 500
+
+
+@app.route('/api/progress/<task_id>', methods=['GET'])
+def get_progress(task_id):
+    """
+    获取下载进度
+    返回: {
+        "status": "pending|downloading|processing|completed|failed",
+        "progress": 0-100,
+        "speed": 下载速度(bytes/s),
+        "eta": 预计剩余时间(秒),
+        "filename": 文件名(完成时),
+        "filesize": 文件大小(完成时),
+        "error": 错误信息(失败时)
+    }
+    """
+    with download_tasks_lock:
+        task = download_tasks.get(task_id)
+
+        if not task:
+            return jsonify({'error': '任务不存在或已过期'}), 404
+
+        # 检查是否已被下载过
+        if task['status'] == 'completed' and task.get('download_count', 0) > 0:
+            return jsonify({
+                'status': 'expired',
+                'error': '文件已被下载，不可重复下载'
+            })
+
+        response = {
+            'status': task['status'],
+            'progress': task['progress'],
+        }
+
+        if task['status'] == 'downloading':
+            response.update({
+                'downloaded_bytes': task.get('downloaded_bytes', 0),
+                'total_bytes': task.get('total_bytes', 0),
+                'speed': task.get('speed', 0),
+                'eta': task.get('eta', 0),
+            })
+        elif task['status'] == 'completed':
+            response.update({
+                'filename': task.get('filename'),
+                'filesize': task.get('filesize'),
+            })
+        elif task['status'] == 'failed':
+            response['error'] = task.get('error', '未知错误')
+
+        return jsonify(response)
+
+
+@app.route('/api/file/<task_id>', methods=['GET'])
+def download_file(task_id):
+    """
+    下载已完成的文件
+    文件下载后会被标记，稍后自动清理
+    """
+    with download_tasks_lock:
+        task = download_tasks.get(task_id)
+
+        if not task:
+            return jsonify({'error': '任务不存在或已过期'}), 404
+
+        if task['status'] != 'completed':
+            return jsonify({'error': '文件尚未准备好'}), 400
+
+        # 检查是否已被下载过
+        if task.get('download_count', 0) > 0:
+            return jsonify({'error': '文件已被下载，不可重复下载'}), 410
+
+        filepath = task.get('filepath')
+        filename = task.get('filename')
+        mimetype = task.get('mimetype', 'application/octet-stream')
+
+        if not filepath or not os.path.exists(filepath):
+            return jsonify({'error': '文件不存在'}), 404
+
+        # 标记为已下载
+        task['download_count'] = task.get('download_count', 0) + 1
+
+    logger.info(f'用户下载文件: {task_id} - {filename}')
+
+    return send_file(
+        filepath,
+        as_attachment=True,
+        download_name=filename,
+        mimetype=mimetype
+    )
+
 
 @app.route('/api/info', methods=['POST'])
 def get_video_info():
