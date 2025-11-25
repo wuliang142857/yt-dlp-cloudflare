@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify, Response, send_from_directory, after_this_request
+from flask import Flask, request, send_file, Response, send_from_directory, after_this_request
 from flask_cors import CORS
 import yt_dlp
 import os
@@ -18,13 +18,17 @@ from pathlib import Path
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)  # 允许跨域请求
 
-# 配置 Flask JSON 输出，禁用 ASCII 编码（支持中文等非 ASCII 字符）
-app.config['JSON_AS_ASCII'] = False
-app.config['JSON_SORT_KEYS'] = False  # 保持 JSON 键的原始顺序
-
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def json_response(data, status=200):
+    """返回 JSON 响应，支持中文"""
+    return Response(
+        json.dumps(data, ensure_ascii=False),
+        status=status,
+        mimetype='application/json; charset=utf-8'
+    )
 
 # 视频质量优先级：720p > 480p > 360p > 1080p > 4K
 QUALITY_PRIORITY = ['720', '480', '360', '1080', '2160']
@@ -99,17 +103,114 @@ else:
     logger.info('未配置代理，将直接连接')
 
 # ================ 下载任务管理 ================
-# 存储所有下载任务的状态
-# 结构: {task_id: {status, progress, speed, eta, filename, filepath, error, created_at, downloaded_at, download_count}}
-download_tasks = {}
-download_tasks_lock = threading.Lock()
+# 使用基于文件的任务存储，解决多 worker 进程间数据共享问题
+# 每个任务存储为独立的 JSON 文件：/tmp/yt-dlp-tasks/{task_id}.json
 
 # 缓存目录
 CACHE_DIR = os.environ.get('CACHE_DIR', '/tmp/yt-dlp-cache')
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+# 任务文件目录
+TASKS_DIR = os.path.join(CACHE_DIR, 'tasks')
+os.makedirs(TASKS_DIR, exist_ok=True)
+
 # 文件过期时间（秒）
 FILE_EXPIRE_TIME = 5 * 60  # 5分钟
+
+# 文件锁目录
+LOCKS_DIR = os.path.join(CACHE_DIR, 'locks')
+os.makedirs(LOCKS_DIR, exist_ok=True)
+
+import fcntl
+
+def get_task_file_path(task_id):
+    """获取任务文件路径"""
+    return os.path.join(TASKS_DIR, f'{task_id}.json')
+
+def get_lock_file_path(task_id):
+    """获取锁文件路径"""
+    return os.path.join(LOCKS_DIR, f'{task_id}.lock')
+
+def save_task(task_id, task_data):
+    """保存任务数据到文件"""
+    task_file = get_task_file_path(task_id)
+    lock_file = get_lock_file_path(task_id)
+
+    try:
+        with open(lock_file, 'w') as lf:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            try:
+                with open(task_file, 'w', encoding='utf-8') as f:
+                    json.dump(task_data, f, ensure_ascii=False)
+            finally:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        logger.error(f'保存任务数据失败: {task_id}, 错误: {e}')
+
+def load_task(task_id):
+    """从文件加载任务数据"""
+    task_file = get_task_file_path(task_id)
+    lock_file = get_lock_file_path(task_id)
+
+    if not os.path.exists(task_file):
+        return None
+
+    try:
+        with open(lock_file, 'w') as lf:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_SH)
+            try:
+                with open(task_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            finally:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        logger.error(f'加载任务数据失败: {task_id}, 错误: {e}')
+        return None
+
+def update_task(task_id, updates):
+    """更新任务数据"""
+    task_file = get_task_file_path(task_id)
+    lock_file = get_lock_file_path(task_id)
+
+    try:
+        with open(lock_file, 'w') as lf:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            try:
+                task_data = {}
+                if os.path.exists(task_file):
+                    with open(task_file, 'r', encoding='utf-8') as f:
+                        task_data = json.load(f)
+
+                task_data.update(updates)
+
+                with open(task_file, 'w', encoding='utf-8') as f:
+                    json.dump(task_data, f, ensure_ascii=False)
+            finally:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        logger.error(f'更新任务数据失败: {task_id}, 错误: {e}')
+
+def delete_task(task_id):
+    """删除任务文件"""
+    task_file = get_task_file_path(task_id)
+    lock_file = get_lock_file_path(task_id)
+
+    try:
+        if os.path.exists(task_file):
+            os.remove(task_file)
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+    except Exception as e:
+        logger.error(f'删除任务文件失败: {task_id}, 错误: {e}')
+
+def get_all_task_ids():
+    """获取所有任务ID"""
+    try:
+        task_files = os.listdir(TASKS_DIR)
+        return [f[:-5] for f in task_files if f.endswith('.json')]
+    except Exception as e:
+        logger.error(f'获取任务列表失败: {e}')
+        return []
 
 def cleanup_expired_files():
     """清理过期的下载文件"""
@@ -119,55 +220,58 @@ def cleanup_expired_files():
             current_time = time.time()
             tasks_to_remove = []
 
-            with download_tasks_lock:
-                for task_id, task in list(download_tasks.items()):
-                    # 跳过正在下载的任务
-                    if task['status'] == 'downloading':
-                        continue
+            # 遍历所有任务文件
+            for task_id in get_all_task_ids():
+                task = load_task(task_id)
+                if not task:
+                    continue
 
-                    # 检查是否过期（下载完成后5分钟未被下载，或已被下载过）
-                    if task['status'] == 'completed':
-                        # 已被下载过，删除文件和任务
-                        if task.get('download_count', 0) > 0:
-                            tasks_to_remove.append(task_id)
-                            logger.info(f'任务 {task_id} 已被下载，准备清理')
-                        # 超过5分钟未下载
-                        elif task.get('downloaded_at') and (current_time - task['downloaded_at'] > FILE_EXPIRE_TIME):
-                            tasks_to_remove.append(task_id)
-                            logger.info(f'任务 {task_id} 已过期（5分钟未下载），准备清理')
+                # 跳过正在下载的任务
+                if task['status'] == 'downloading':
+                    continue
 
-                    # 失败的任务也清理
-                    elif task['status'] == 'failed':
-                        if current_time - task.get('created_at', 0) > FILE_EXPIRE_TIME:
-                            tasks_to_remove.append(task_id)
+                # 检查是否过期（下载完成后5分钟未被下载，或已被下载过）
+                if task['status'] == 'completed':
+                    # 已被下载过，删除文件和任务
+                    if task.get('download_count', 0) > 0:
+                        tasks_to_remove.append(task_id)
+                        logger.info(f'任务 {task_id} 已被下载，准备清理')
+                    # 超过5分钟未下载
+                    elif task.get('downloaded_at') and (current_time - task['downloaded_at'] > FILE_EXPIRE_TIME):
+                        tasks_to_remove.append(task_id)
+                        logger.info(f'任务 {task_id} 已过期（5分钟未下载），准备清理')
+
+                # 失败的任务也清理
+                elif task['status'] == 'failed':
+                    if current_time - task.get('created_at', 0) > FILE_EXPIRE_TIME:
+                        tasks_to_remove.append(task_id)
 
             # 清理任务和文件
             for task_id in tasks_to_remove:
-                with download_tasks_lock:
-                    task = download_tasks.get(task_id)
-                    if task:
-                        filepath = task.get('filepath')
-                        temp_dir = task.get('temp_dir')
+                task = load_task(task_id)
+                if task:
+                    filepath = task.get('filepath')
+                    temp_dir = task.get('temp_dir')
 
-                        # 删除文件
-                        if filepath and os.path.exists(filepath):
-                            try:
-                                os.remove(filepath)
-                                logger.info(f'已删除文件: {filepath}')
-                            except Exception as e:
-                                logger.error(f'删除文件失败: {e}')
+                    # 删除文件
+                    if filepath and os.path.exists(filepath):
+                        try:
+                            os.remove(filepath)
+                            logger.info(f'已删除文件: {filepath}')
+                        except Exception as e:
+                            logger.error(f'删除文件失败: {e}')
 
-                        # 删除临时目录
-                        if temp_dir and os.path.exists(temp_dir):
-                            try:
-                                shutil.rmtree(temp_dir)
-                                logger.info(f'已删除临时目录: {temp_dir}')
-                            except Exception as e:
-                                logger.error(f'删除临时目录失败: {e}')
+                    # 删除临时目录
+                    if temp_dir and os.path.exists(temp_dir):
+                        try:
+                            shutil.rmtree(temp_dir)
+                            logger.info(f'已删除临时目录: {temp_dir}')
+                        except Exception as e:
+                            logger.error(f'删除临时目录失败: {e}')
 
-                        # 从任务列表中移除
-                        del download_tasks[task_id]
-                        logger.info(f'已清理任务: {task_id}')
+                    # 删除任务文件
+                    delete_task(task_id)
+                    logger.info(f'已清理任务: {task_id}')
 
         except Exception as e:
             logger.error(f'清理线程错误: {e}')
@@ -212,7 +316,7 @@ def index():
 @app.route('/health')
 def health():
     """Koyeb 健康检查"""
-    return jsonify({'status': 'healthy'}), 200
+    return json_response({'status': 'healthy'})
 
 @app.route('/api/download', methods=['POST'])
 def download_video():
@@ -228,7 +332,7 @@ def download_video():
         data = request.get_json()
 
         if not data or 'url' not in data:
-            return jsonify({'error': '缺少 URL 参数'}), 400
+            return json_response({'error': '缺少 URL 参数'}, 400)
 
         video_url = data['url']
         format_id = data.get('format_id')
@@ -285,7 +389,7 @@ def download_video():
 
             if not os.path.exists(video_file):
                 logger.error(f'视频文件不存在: {video_file}')
-                return jsonify({'error': '视频下载失败'}), 500
+                return json_response({'error': '视频下载失败'}, 500)
 
             video_title = info.get('title', 'video')
             video_ext = info.get('ext', 'mp4')
@@ -344,10 +448,10 @@ def download_video():
 
     except yt_dlp.utils.DownloadError as e:
         logger.error(f'下载错误: {str(e)}')
-        return jsonify({'error': f'下载失败: {str(e)}'}), 400
+        return json_response({'error': f'下载失败: {str(e)}'}, 400)
     except Exception as e:
         logger.error(f'服务器错误: {str(e)}')
-        return jsonify({'error': f'服务器错误: {str(e)}'}), 500
+        return json_response({'error': f'服务器错误: {str(e)}'}, 500)
 
 
 # ================ 异步下载相关接口 ================
@@ -361,35 +465,38 @@ def download_video_task(task_id, video_url, format_id, subtitle_lang):
         output_template = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
         # 更新任务状态
-        with download_tasks_lock:
-            download_tasks[task_id]['temp_dir'] = temp_dir
-            download_tasks[task_id]['status'] = 'downloading'
+        update_task(task_id, {
+            'temp_dir': temp_dir,
+            'status': 'downloading'
+        })
 
         # 进度回调函数
         def progress_hook(d):
-            with download_tasks_lock:
-                if task_id not in download_tasks:
-                    return
+            task = load_task(task_id)
+            if not task:
+                return
 
-                if d['status'] == 'downloading':
-                    total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
-                    downloaded = d.get('downloaded_bytes', 0)
+            if d['status'] == 'downloading':
+                total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                downloaded = d.get('downloaded_bytes', 0)
 
-                    if total > 0:
-                        progress = (downloaded / total) * 100
-                    else:
-                        progress = 0
+                if total > 0:
+                    progress = (downloaded / total) * 100
+                else:
+                    progress = 0
 
-                    download_tasks[task_id].update({
-                        'progress': round(progress, 1),
-                        'downloaded_bytes': downloaded,
-                        'total_bytes': total,
-                        'speed': d.get('speed', 0),
-                        'eta': d.get('eta', 0),
-                    })
-                elif d['status'] == 'finished':
-                    download_tasks[task_id]['progress'] = 100
-                    download_tasks[task_id]['status'] = 'processing'
+                update_task(task_id, {
+                    'progress': round(progress, 1),
+                    'downloaded_bytes': downloaded,
+                    'total_bytes': total,
+                    'speed': d.get('speed', 0),
+                    'eta': d.get('eta', 0),
+                })
+            elif d['status'] == 'finished':
+                update_task(task_id, {
+                    'progress': 100,
+                    'status': 'processing'
+                })
 
         # 配置 yt-dlp 选项
         ydl_opts = {
@@ -468,27 +575,25 @@ def download_video_task(task_id, video_url, format_id, subtitle_lang):
                 file_size = os.path.getsize(zip_path)
 
             # 更新任务状态为完成
-            with download_tasks_lock:
-                download_tasks[task_id].update({
-                    'status': 'completed',
-                    'progress': 100,
-                    'filename': final_filename,
-                    'filepath': final_filepath,
-                    'filesize': file_size,
-                    'mimetype': final_mimetype,
-                    'downloaded_at': time.time(),
-                    'download_count': 0,
-                })
+            update_task(task_id, {
+                'status': 'completed',
+                'progress': 100,
+                'filename': final_filename,
+                'filepath': final_filepath,
+                'filesize': file_size,
+                'mimetype': final_mimetype,
+                'downloaded_at': time.time(),
+                'download_count': 0,
+            })
 
             logger.info(f'任务 {task_id} 下载完成: {final_filename}, 大小: {file_size / 1024 / 1024:.2f} MB')
 
     except Exception as e:
         logger.error(f'任务 {task_id} 下载失败: {str(e)}')
-        with download_tasks_lock:
-            download_tasks[task_id].update({
-                'status': 'failed',
-                'error': str(e),
-            })
+        update_task(task_id, {
+            'status': 'failed',
+            'error': str(e),
+        })
         # 清理临时目录
         if temp_dir and os.path.exists(temp_dir):
             try:
@@ -512,7 +617,7 @@ def start_download():
         data = request.get_json()
 
         if not data or 'url' not in data:
-            return jsonify({'error': '缺少 URL 参数'}), 400
+            return json_response({'error': '缺少 URL 参数'}, 400)
 
         video_url = data['url']
         format_id = data.get('format_id')
@@ -521,23 +626,22 @@ def start_download():
         # 生成任务ID
         task_id = str(uuid.uuid4())
 
-        # 初始化任务状态
-        with download_tasks_lock:
-            download_tasks[task_id] = {
-                'status': 'pending',
-                'progress': 0,
-                'downloaded_bytes': 0,
-                'total_bytes': 0,
-                'speed': 0,
-                'eta': 0,
-                'filename': None,
-                'filepath': None,
-                'error': None,
-                'created_at': time.time(),
-                'downloaded_at': None,
-                'download_count': 0,
-                'temp_dir': None,
-            }
+        # 初始化任务状态（保存到文件）
+        save_task(task_id, {
+            'status': 'pending',
+            'progress': 0,
+            'downloaded_bytes': 0,
+            'total_bytes': 0,
+            'speed': 0,
+            'eta': 0,
+            'filename': None,
+            'filepath': None,
+            'error': None,
+            'created_at': time.time(),
+            'downloaded_at': None,
+            'download_count': 0,
+            'temp_dir': None,
+        })
 
         # 启动下载线程
         thread = threading.Thread(
@@ -549,11 +653,11 @@ def start_download():
 
         logger.info(f'启动下载任务: {task_id}, URL: {video_url}')
 
-        return jsonify({'task_id': task_id})
+        return json_response({'task_id': task_id})
 
     except Exception as e:
         logger.error(f'启动下载任务失败: {str(e)}')
-        return jsonify({'error': f'启动下载失败: {str(e)}'}), 500
+        return json_response({'error': f'启动下载失败: {str(e)}'}, 500)
 
 
 @app.route('/api/progress/<task_id>', methods=['GET'])
@@ -570,40 +674,39 @@ def get_progress(task_id):
         "error": 错误信息(失败时)
     }
     """
-    with download_tasks_lock:
-        task = download_tasks.get(task_id)
+    task = load_task(task_id)
 
-        if not task:
-            return jsonify({'error': '任务不存在或已过期'}), 404
+    if not task:
+        return json_response({'error': '任务不存在或已过期'}, 404)
 
-        # 检查是否已被下载过
-        if task['status'] == 'completed' and task.get('download_count', 0) > 0:
-            return jsonify({
-                'status': 'expired',
-                'error': '文件已被下载，不可重复下载'
-            })
+    # 检查是否已被下载过
+    if task['status'] == 'completed' and task.get('download_count', 0) > 0:
+        return json_response({
+            'status': 'expired',
+            'error': '文件已被下载，不可重复下载'
+        })
 
-        response = {
-            'status': task['status'],
-            'progress': task['progress'],
-        }
+    response = {
+        'status': task['status'],
+        'progress': task['progress'],
+    }
 
-        if task['status'] == 'downloading':
-            response.update({
-                'downloaded_bytes': task.get('downloaded_bytes', 0),
-                'total_bytes': task.get('total_bytes', 0),
-                'speed': task.get('speed', 0),
-                'eta': task.get('eta', 0),
-            })
-        elif task['status'] == 'completed':
-            response.update({
-                'filename': task.get('filename'),
-                'filesize': task.get('filesize'),
-            })
-        elif task['status'] == 'failed':
-            response['error'] = task.get('error', '未知错误')
+    if task['status'] == 'downloading':
+        response.update({
+            'downloaded_bytes': task.get('downloaded_bytes', 0),
+            'total_bytes': task.get('total_bytes', 0),
+            'speed': task.get('speed', 0),
+            'eta': task.get('eta', 0),
+        })
+    elif task['status'] == 'completed':
+        response.update({
+            'filename': task.get('filename'),
+            'filesize': task.get('filesize'),
+        })
+    elif task['status'] == 'failed':
+        response['error'] = task.get('error', '未知错误')
 
-        return jsonify(response)
+    return json_response(response)
 
 
 @app.route('/api/file/<task_id>', methods=['GET'])
@@ -612,28 +715,29 @@ def download_file(task_id):
     下载已完成的文件
     文件下载后会被标记，稍后自动清理
     """
-    with download_tasks_lock:
-        task = download_tasks.get(task_id)
+    task = load_task(task_id)
 
-        if not task:
-            return jsonify({'error': '任务不存在或已过期'}), 404
+    if not task:
+        return json_response({'error': '任务不存在或已过期'}, 404)
 
-        if task['status'] != 'completed':
-            return jsonify({'error': '文件尚未准备好'}), 400
+    if task['status'] != 'completed':
+        return json_response({'error': '文件尚未准备好'}, 400)
 
-        # 检查是否已被下载过
-        if task.get('download_count', 0) > 0:
-            return jsonify({'error': '文件已被下载，不可重复下载'}), 410
+    # 检查是否已被下载过
+    if task.get('download_count', 0) > 0:
+        return json_response({'error': '文件已被下载，不可重复下载'}, 410)
 
-        filepath = task.get('filepath')
-        filename = task.get('filename')
-        mimetype = task.get('mimetype', 'application/octet-stream')
+    filepath = task.get('filepath')
+    filename = task.get('filename')
+    mimetype = task.get('mimetype', 'application/octet-stream')
 
-        if not filepath or not os.path.exists(filepath):
-            return jsonify({'error': '文件不存在'}), 404
+    if not filepath or not os.path.exists(filepath):
+        return json_response({'error': '文件不存在'}, 404)
 
-        # 标记为已下载
-        task['download_count'] = task.get('download_count', 0) + 1
+    # 标记为已下载
+    update_task(task_id, {
+        'download_count': task.get('download_count', 0) + 1
+    })
 
     logger.info(f'用户下载文件: {task_id} - {filename}')
 
@@ -656,7 +760,7 @@ def get_video_info():
         data = request.get_json()
 
         if not data or 'url' not in data:
-            return jsonify({'error': '缺少 URL 参数'}), 400
+            return json_response({'error': '缺少 URL 参数'}, 400)
 
         video_url = data['url']
         logger.info(f'获取视频信息: {video_url}')
@@ -769,7 +873,7 @@ def get_video_info():
 
     except Exception as e:
         logger.error(f'获取视频信息失败: {str(e)}')
-        return jsonify({'error': f'获取信息失败: {str(e)}'}), 400
+        return json_response({'error': f'获取信息失败: {str(e)}'}, 400)
 
 
 def get_language_name(lang_code):
