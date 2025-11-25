@@ -2,6 +2,20 @@
 
 基于 yt-dlp 的 YouTube 视频下载工具，通过 Cloudflare Workers + Koyeb 部署，提供 Web 界面进行视频下载。
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Built%20with-AI-blueviolet?style=for-the-badge&logo=openai&logoColor=white" alt="Built with AI"/>
+</p>
+
+<p align="center">
+  <b>🤖 这个工程全部是由 AI 来实现。</b>
+</p>
+
+## Docker 镜像
+
+```bash
+docker pull wuliang142857/yt-dlp-cloudflare:latest
+```
+
 ## 核心功能
 
 - **视频下载**: 支持下载 YouTube 视频，可选择不同分辨率（720p/480p/360p/1080p/4K）
@@ -125,12 +139,3 @@ GET /health
     └── wrangler.toml      # Wrangler 配置
 ```
 
----
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Built%20with-AI-blueviolet?style=for-the-badge&logo=openai&logoColor=white" alt="Built with AI"/>
-</p>
-
-<p align="center">
-  <b>🤖 这个工程全部是由 AI 来实现。</b>
-</p>
